@@ -1,6 +1,17 @@
 import { newProcedure, volatilityArgs } from '../algorithms/volatility.ts'
+import { FractionalPeriodCalculator } from '../algorithms/fractional-period-calculator.ts'
 
 const scalingFactor = 173.7178
+
+/**
+ * Interface representing a player's current rating state with time information
+ */
+export interface PlayerRatingState {
+	rating: number
+	rd: number
+	vol: number
+	lastUpdateTime: number
+}
 
 /**
  * The class for a player object
@@ -54,6 +65,17 @@ export class Player {
 		delta: number,
 		{ vol, tau, rd, rating }: volatilityArgs
 	) => number = newProcedure
+	
+	/**
+	 * Timestamp of the last rating update (Unix milliseconds)
+	 * @default Current time when player is created
+	 */
+	private lastUpdateTime: number = Date.now()
+	
+	/**
+	 * Fractional period calculator instance (optional, set by Glicko2 when enabled)
+	 */
+	private fractionalCalculator?: FractionalPeriodCalculator
 
 	constructor(rating: number, rd: number, vol: number, tau: number) {
 		this._tau = tau
@@ -233,5 +255,117 @@ export class Player {
 				(this.outcomes[i] - this._E(this.adv_ranks[i], this.adv_rds[i]))
 		}
 		return v * tempSum
+	}
+
+	/**
+	 * Sets the fractional period calculator for time-based RD updates
+	 * @param calculator The fractional period calculator instance
+	 */
+	public setFractionalCalculator(calculator: FractionalPeriodCalculator): void {
+		this.fractionalCalculator = calculator
+	}
+
+	/**
+	 * Gets the last update time
+	 * @returns Unix timestamp in milliseconds
+	 */
+	public getLastUpdateTime(): number {
+		return this.lastUpdateTime
+	}
+
+	/**
+	 * Sets the last update time
+	 * @param timestamp Unix timestamp in milliseconds
+	 */
+	public setLastUpdateTime(timestamp: number): void {
+		this.lastUpdateTime = timestamp
+	}
+
+	/**
+	 * Updates RD based on elapsed time since last update
+	 * Implements: newRD = sqrt(oldRD² + elapsedPeriods × volatility²)
+	 * @param currentTime Current time in Unix milliseconds (defaults to Date.now())
+	 */
+	public updateRdForTimeElapsed(currentTime: number = Date.now()): void {
+		if (!this.fractionalCalculator) return
+
+		const elapsedPeriods = this.fractionalCalculator.calculateElapsedPeriods(
+			this.lastUpdateTime,
+			currentTime
+		)
+
+		if (elapsedPeriods > 0) {
+			const currentRd = this.getRd()
+			const newRd = this.fractionalCalculator.calculateNewRd(
+				currentRd,
+				this.__vol,
+				elapsedPeriods
+			)
+			this.setRd(newRd)
+			this.lastUpdateTime = currentTime
+		}
+	}
+
+	/**
+	 * Gets current rating with time-based RD decay applied
+	 * This method does not modify the original player state
+	 * @param currentTime Current time in Unix milliseconds (defaults to Date.now())
+	 * @returns Current rating state with time-adjusted RD
+	 */
+	public getCurrentRating(currentTime: number = Date.now()): PlayerRatingState {
+		if (!this.fractionalCalculator) {
+			return {
+				rating: this.getRating(),
+				rd: this.getRd(),
+				vol: this.getVol(),
+				lastUpdateTime: this.lastUpdateTime
+			}
+		}
+
+		// Calculate time-adjusted RD without modifying the player
+		const elapsedPeriods = this.fractionalCalculator.calculateElapsedPeriods(
+			this.lastUpdateTime,
+			currentTime
+		)
+
+		const currentRd = this.getRd()
+		const timeAdjustedRd = elapsedPeriods > 0 
+			? this.fractionalCalculator.calculateNewRd(currentRd, this.__vol, elapsedPeriods)
+			: currentRd
+
+		return {
+			rating: this.getRating(),
+			rd: timeAdjustedRd,
+			vol: this.getVol(),
+			lastUpdateTime: currentTime
+		}
+	}
+
+	/**
+	 * Creates a deep clone of this player
+	 * @returns A new Player instance with identical values
+	 */
+	public clone(): Player {
+		const clonedPlayer = new Player(
+			this.getRating(),
+			this.getRd(),
+			this.getVol(),
+			this._tau
+		)
+		
+		// Copy all the properties
+		clonedPlayer.defaultRating = this.defaultRating
+		clonedPlayer.volatilityAlgorithm = this.volatilityAlgorithm
+		clonedPlayer.id = this.id
+		clonedPlayer.lastUpdateTime = this.lastUpdateTime
+		clonedPlayer.adv_ranks = [...this.adv_ranks]
+		clonedPlayer.adv_rds = [...this.adv_rds]
+		clonedPlayer.outcomes = [...this.outcomes]
+		
+		if (this.fractionalCalculator) {
+			clonedPlayer.setFractionalCalculator(this.fractionalCalculator)
+		}
+		
+		return clonedPlayer
 	}
 }

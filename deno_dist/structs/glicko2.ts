@@ -1,7 +1,54 @@
 import { newProcedure, volatilityArgs } from '../algorithms/volatility.ts'
-import { Player } from './player.ts'
+import { FractionalPeriodCalculator } from '../algorithms/fractional-period-calculator.ts'
+import { Player, PlayerRatingState } from './player.ts'
 import { Race } from './race.ts'
 import { Team } from './team.ts'
+
+/**
+ * Configuration options for Glicko2 system with fractional period support
+ */
+export interface Glicko2Options {
+	/**
+	 * The system constant, which constrains the change in volatility over time
+	 * @default 0.5
+	 */
+	tau: number
+	/**
+	 * Base rating
+	 * @default 1500
+	 */
+	rating: number
+	/**
+	 * Base volatility
+	 * The volatility measure indicates the degree of expected fluctuation in a player's rating
+	 * @default 0.06
+	 */
+	vol: number
+	/**
+	 * Base rating deviation
+	 * @default 350
+	 */
+	rd: number
+	/**
+	 * The algorithm to calculate the volatility
+	 * @default {@link newProcedure}
+	 */
+	volatilityAlgorithm: (
+		v: number,
+		delta: number,
+		{ vol, tau, rd, rating }: volatilityArgs
+	) => number
+	/**
+	 * Duration of a rating period in days (for fractional calculations)
+	 * @default 4.6 (Lichess value)
+	 */
+	ratingPeriodDays: number
+	/**
+	 * Enable fractional rating periods for instant updates
+	 * @default false
+	 */
+	enableFractionalPeriods: boolean
+}
 
 /**
  * The main class of the rating system
@@ -41,55 +88,43 @@ export class Glicko2 {
 		delta: number,
 		{ vol, tau, rd, rating }: volatilityArgs
 	) => number
+	/**
+	 * Whether fractional rating periods are enabled
+	 */
+	private enableFractionalPeriods: boolean
+	/**
+	 * Fractional period calculator instance (when enabled)
+	 */
+	private periodCalculator?: FractionalPeriodCalculator
 	constructor(
-		settings: {
-			/**
-			 * The system constant, which constrains the change in volatility over time
-			 * @default 0.5
-			 */
-			tau: number
-			/**
-			 * Base rating
-			 * @default 1500
-			 */
-			rating: number
-			/**
-			 * Base volatility
-			 * The volatility measure indicates the degree of expected fluctuation in a player’s rating
-			 * @default 0.06
-			 */
-			vol: number
-			/**
-			 * Base rating deviation
-			 * @default 350
-			 */
-			rd: number
-			/**
-			 * The algorithm to calculate the volatility
-			 * @default {@link newProcedure}
-			 */
-			volatilityAlgorithm: (
-				v: number,
-				delta: number,
-				{ vol, tau, rd, rating }: volatilityArgs
-			) => number
-		} = {
+		settings: Partial<Glicko2Options> = {}
+	) {
+		const defaultSettings: Glicko2Options = {
 			tau: 0.5,
 			rating: 1500,
 			rd: 350,
 			vol: 0.06,
 			volatilityAlgorithm: newProcedure,
+			ratingPeriodDays: 4.6,
+			enableFractionalPeriods: false
 		}
-	) {
-		this._tau = settings.tau
+		
+		const config = { ...defaultSettings, ...settings }
+		this._tau = config.tau
 
-		this._default_rating = settings.rating
+		this._default_rating = config.rating
 
-		this._default_rd = settings.rd
+		this._default_rd = config.rd
 
-		this._default_vol = settings.vol
+		this._default_vol = config.vol
 
-		this._volatilityAlgorithm = settings.volatilityAlgorithm
+		this._volatilityAlgorithm = config.volatilityAlgorithm
+		
+		this.enableFractionalPeriods = config.enableFractionalPeriods
+		
+		if (this.enableFractionalPeriods) {
+			this.periodCalculator = new FractionalPeriodCalculator(config.ratingPeriodDays)
+		}
 	}
 
 	/**
@@ -216,6 +251,12 @@ export class Glicko2 {
 		player.adv_ranks = []
 		player.adv_rds = []
 		player.outcomes = []
+		
+		// Set fractional calculator if enabled
+		if (this.periodCalculator) {
+			player.setFractionalCalculator(this.periodCalculator)
+		}
+		
 		this.players[id] = player
 		return player
 	}
@@ -284,6 +325,57 @@ export class Glicko2 {
 			finalMatches.push([val, team2Composite, 1 - match[2]])
 		})
 		return finalMatches
+	}
+
+	/**
+	 * Updates a single player's rating instantly against one opponent
+	 * Perfect for puzzle applications and real-time rating updates
+	 * @param player The player to update
+	 * @param opponentRating The opponent's rating
+	 * @param opponentRD The opponent's rating deviation
+	 * @param outcome The game outcome (0 = loss, 0.5 = draw, 1 = win)
+	 * @param gameTime The time when the game occurred (defaults to current time)
+	 * @returns The updated rating state
+	 */
+	public updateRatingInstant(
+		player: Player,
+		opponentRating: number,
+		opponentRD: number,
+		outcome: number,
+		gameTime: number = Date.now()
+	): PlayerRatingState {
+		// Apply time-based RD decay first if fractional periods are enabled
+		if (this.enableFractionalPeriods) {
+			player.updateRdForTimeElapsed(gameTime)
+		}
+
+		// Create temporary opponent for calculation
+		const opponent = this.makePlayer(opponentRating, opponentRD, this._default_vol)
+
+		// Process single match using existing algorithm
+		const matches: playerMatch[] = [[player, opponent, outcome]]
+		this.updateRatings(matches)
+
+		// Update player's timestamp if fractional periods are enabled
+		if (this.enableFractionalPeriods) {
+			player.setLastUpdateTime(gameTime)
+		}
+
+		return player.getCurrentRating(gameTime)
+	}
+
+	/**
+	 * Gets whether fractional rating periods are enabled
+	 */
+	public isFractionalPeriodsEnabled(): boolean {
+		return this.enableFractionalPeriods
+	}
+
+	/**
+	 * Gets the fractional period calculator instance (if enabled)
+	 */
+	public getPeriodCalculator(): FractionalPeriodCalculator | undefined {
+		return this.periodCalculator
 	}
 }
 
