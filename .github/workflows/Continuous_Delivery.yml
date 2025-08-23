@@ -10,14 +10,14 @@ jobs:
         runs-on: ubuntu-latest
         steps:
             - name: Checkout Project
-              uses: actions/checkout@ec3a7ce113134d7a93b817d10a8272cb61118579 # renovate: tag=v2
+              uses: actions/checkout@v4 # renovate: tag=v4
             - name: Use Node.js v16
-              uses: actions/setup-node@1f8c6b94b26d0feae1e387ca63ccbdc44d27b561 # renovate: tag=v2
+              uses: actions/setup-node@v4 # renovate: tag=v4
               with:
                   node-version: 16
                   registry-url: https://registry.npmjs.org/
             - name: Restore CI Cache
-              uses: actions/cache@937d24475381cd9c75ae6db12cb4e79714b926ed # renovate: tag=v2.1.7
+              uses: actions/cache@v4 # renovate: tag=v4
               id: cache-restore
               with:
                   path: node_modules
@@ -28,7 +28,7 @@ jobs:
             - name: Build Docs
               run: yarn docs
             - name: Deploy Docs
-              uses: JamesIves/github-pages-deploy-action@830e6a4f7c81743c52f3fed0ac67428feff9620a # tag=v4.2.5
+              uses: JamesIves/github-pages-deploy-action@v4 # tag=v4.2.5
               with:
                   branch: gh-pages # The branch the action should deploy to.
                   folder: docs # The folder the action should deploy.
