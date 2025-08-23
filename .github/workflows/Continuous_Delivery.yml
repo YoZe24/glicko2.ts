@@ -1,8 +1,8 @@
-# name: Continuous Delivery
-# on:
-#     push:
-#         branches:
-#             - main
+name: Continuous Delivery
+on:
+    push:
+        branches:
+            - main
 
 # jobs:
 #     docs:
